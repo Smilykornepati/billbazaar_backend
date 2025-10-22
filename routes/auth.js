@@ -18,7 +18,7 @@ router.post('/resend-otp', resendOTP);
 router.post('/forgot-password', forgotPassword);
 router.post('/reset-password', resetPassword);
 
-// Protected routes (examples)
+// Protected routes
 router.get('/profile', authMiddleware, (req, res) => {
   res.json({
     success: true,

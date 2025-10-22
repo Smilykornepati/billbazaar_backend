@@ -1,11 +1,11 @@
 const express = require('express');
 const cors = require('cors');
-const connectDB = require('./config/database');
+const { connectDB } = require('./config/database');
 require('dotenv').config();
 
 const app = express();
 
-// Connect to MongoDB
+// Connect to MySQL
 connectDB();
 
 // Middleware
@@ -18,7 +18,11 @@ app.use('/api/auth', require('./routes/auth'));
 
 // Health check route
 app.get('/', (req, res) => {
-  res.json({ message: 'Authentication API is running!' });
+  res.json({ 
+    message: 'Authentication API is running!',
+    database: 'MySQL',
+    status: 'Connected'
+  });
 });
 
 // Error handling middleware
@@ -43,5 +47,6 @@ const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
-  console.log(`API Documentation available at http://localhost:${PORT}`);
+  console.log(`API available at http://localhost:${PORT}`);
+  console.log(`Health check: http://localhost:${PORT}/`);
 });

@@ -5,7 +5,7 @@ const { sendOTPEmail } = require('../utils/emailService');
 // Generate JWT Token
 const generateToken = (userId) => {
   return jwt.sign({ userId }, process.env.JWT_SECRET, {
-    expiresIn: '7d' // Token expires in 7 days
+    expiresIn: '7d'
   });
 };
 
@@ -24,11 +24,24 @@ const signup = async (req, res) => {
       });
     }
 
-    // Check if passwords match
     if (password !== confirmPassword) {
       return res.status(400).json({
         success: false,
         message: 'Passwords do not match'
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters long'
+      });
+    }
+
+    if (name.length < 2 || name.length > 50) {
+      return res.status(400).json({
+        success: false,
+        message: 'Name must be between 2 and 50 characters'
       });
     }
 
@@ -42,7 +55,7 @@ const signup = async (req, res) => {
     }
 
     // Create new user
-    const user = new User({
+    const user = await User.create({
       name: name.trim(),
       email: email.toLowerCase().trim(),
       password
@@ -50,8 +63,6 @@ const signup = async (req, res) => {
 
     // Generate OTP
     const otp = user.generateOTP();
-
-    // Save user
     await user.save();
 
     // Send OTP email
@@ -59,14 +70,13 @@ const signup = async (req, res) => {
       await sendOTPEmail(user.email, user.name, otp);
     } catch (emailError) {
       console.error('Email sending failed:', emailError);
-      // Continue with registration even if email fails
     }
 
     res.status(201).json({
       success: true,
       message: 'User registered successfully. Please check your email for OTP verification.',
       data: {
-        userId: user._id,
+        userId: user.id,
         email: user.email,
         name: user.name,
         isVerified: user.isVerified
@@ -75,16 +85,6 @@ const signup = async (req, res) => {
 
   } catch (error) {
     console.error('Signup error:', error);
-    
-    if (error.name === 'ValidationError') {
-      const errors = Object.values(error.errors).map(err => err.message);
-      return res.status(400).json({
-        success: false,
-        message: 'Validation failed',
-        errors
-      });
-    }
-
     res.status(500).json({
       success: false,
       message: 'Server error during registration'
@@ -99,7 +99,6 @@ const signin = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Validation
     if (!email || !password) {
       return res.status(400).json({
         success: false,
@@ -107,7 +106,6 @@ const signin = async (req, res) => {
       });
     }
 
-    // Check if user exists
     const user = await User.findByEmail(email);
     if (!user) {
       return res.status(400).json({
@@ -116,7 +114,6 @@ const signin = async (req, res) => {
       });
     }
 
-    // Check if account is locked
     if (user.isLocked) {
       return res.status(423).json({
         success: false,
@@ -124,30 +121,23 @@ const signin = async (req, res) => {
       });
     }
 
-    // Check password
     const isPasswordValid = await user.comparePassword(password);
     if (!isPasswordValid) {
-      // Increment login attempts
       await user.incLoginAttempts();
-      
       return res.status(400).json({
         success: false,
         message: 'Invalid credentials'
       });
     }
 
-    // Reset login attempts on successful login
     if (user.loginAttempts > 0) {
       await user.resetLoginAttempts();
     }
 
-    // Check if user is verified
     if (!user.isVerified) {
-      // Generate new OTP for unverified user
       const otp = user.generateOTP();
       await user.save();
 
-      // Send OTP email
       try {
         await sendOTPEmail(user.email, user.name, otp);
       } catch (emailError) {
@@ -159,7 +149,7 @@ const signin = async (req, res) => {
         message: 'Please verify your email. A new OTP has been sent.',
         requiresVerification: true,
         data: {
-          userId: user._id,
+          userId: user.id,
           email: user.email,
           name: user.name,
           isVerified: user.isVerified
@@ -167,8 +157,7 @@ const signin = async (req, res) => {
       });
     }
 
-    // Generate token
-    const token = generateToken(user._id);
+    const token = generateToken(user.id);
 
     res.status(200).json({
       success: true,
@@ -176,7 +165,7 @@ const signin = async (req, res) => {
       data: {
         token,
         user: {
-          id: user._id,
+          id: user.id,
           name: user.name,
           email: user.email,
           isVerified: user.isVerified
@@ -200,7 +189,6 @@ const verifyOTP = async (req, res) => {
   try {
     const { email, otp } = req.body;
 
-    // Validation
     if (!email || !otp) {
       return res.status(400).json({
         success: false,
@@ -208,7 +196,6 @@ const verifyOTP = async (req, res) => {
       });
     }
 
-    // Check if OTP is 4 digits
     if (!/^\d{4}$/.test(otp)) {
       return res.status(400).json({
         success: false,
@@ -216,7 +203,6 @@ const verifyOTP = async (req, res) => {
       });
     }
 
-    // Find user
     const user = await User.findByEmail(email);
     if (!user) {
       return res.status(404).json({
@@ -225,7 +211,6 @@ const verifyOTP = async (req, res) => {
       });
     }
 
-    // Verify OTP
     const isOTPValid = user.verifyOTP(otp);
     if (!isOTPValid) {
       return res.status(400).json({
@@ -234,13 +219,11 @@ const verifyOTP = async (req, res) => {
       });
     }
 
-    // Mark user as verified and clear OTP
     user.isVerified = true;
     user.clearOTP();
     await user.save();
 
-    // Generate token
-    const token = generateToken(user._id);
+    const token = generateToken(user.id);
 
     res.status(200).json({
       success: true,
@@ -248,7 +231,7 @@ const verifyOTP = async (req, res) => {
       data: {
         token,
         user: {
-          id: user._id,
+          id: user.id,
           name: user.name,
           email: user.email,
           isVerified: user.isVerified
@@ -272,7 +255,6 @@ const resendOTP = async (req, res) => {
   try {
     const { email } = req.body;
 
-    // Validation
     if (!email) {
       return res.status(400).json({
         success: false,
@@ -280,7 +262,6 @@ const resendOTP = async (req, res) => {
       });
     }
 
-    // Find user
     const user = await User.findByEmail(email);
     if (!user) {
       return res.status(404).json({
@@ -289,7 +270,6 @@ const resendOTP = async (req, res) => {
       });
     }
 
-    // Check if user is already verified
     if (user.isVerified) {
       return res.status(400).json({
         success: false,
@@ -297,11 +277,9 @@ const resendOTP = async (req, res) => {
       });
     }
 
-    // Generate new OTP
     const otp = user.generateOTP();
     await user.save();
 
-    // Send OTP email
     try {
       await sendOTPEmail(user.email, user.name, otp);
     } catch (emailError) {
@@ -348,12 +326,11 @@ const forgotPassword = async (req, res) => {
       });
     }
 
-    // Generate OTP for password reset
     const otp = user.generateOTP();
     await user.save();
 
     try {
-      await sendOTPEmail(user.email, user.name, otp, true); // true for password reset
+      await sendOTPEmail(user.email, user.name, otp, true);
     } catch (emailError) {
       console.error('Email sending failed:', emailError);
       return res.status(500).json({
@@ -413,7 +390,6 @@ const resetPassword = async (req, res) => {
       });
     }
 
-    // Update password and clear OTP
     user.password = newPassword;
     user.clearOTP();
     await user.save();

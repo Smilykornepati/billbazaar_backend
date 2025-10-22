@@ -1,156 +1,188 @@
-const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const { getPool } = require('../config/database');
 
-const userSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: [true, 'Name is required'],
-    trim: true,
-    minlength: [2, 'Name must be at least 2 characters long'],
-    maxlength: [50, 'Name cannot exceed 50 characters']
-  },
-  email: {
-    type: String,
-    required: [true, 'Email is required'],
-    unique: true,
-    lowercase: true,
-    trim: true,
-    match: [
-      /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/,
-      'Please enter a valid email address'
-    ]
-  },
-  password: {
-    type: String,
-    required: [true, 'Password is required'],
-    minlength: [6, 'Password must be at least 6 characters long']
-  },
-  isVerified: {
-    type: Boolean,
-    default: false
-  },
-  otp: {
-    code: {
-      type: String,
-      default: null
-    },
-    expiresAt: {
-      type: Date,
-      default: null
-    }
-  },
-  loginAttempts: {
-    type: Number,
-    default: 0
-  },
-  lockUntil: {
-    type: Date,
-    default: null
+class User {
+  constructor(data) {
+    this.id = data.id;
+    this.name = data.name;
+    this.email = data.email;
+    this.password = data.password;
+    this.isVerified = data.is_verified || false;
+    this.otpCode = data.otp_code;
+    this.otpExpiresAt = data.otp_expires_at;
+    this.loginAttempts = data.login_attempts || 0;
+    this.lockUntil = data.lock_until;
+    this.createdAt = data.created_at;
+    this.updatedAt = data.updated_at;
   }
-}, {
-  timestamps: true
-});
 
-// Index for email lookup
-userSchema.index({ email: 1 });
+  // Check if account is locked
+  get isLocked() {
+    return !!(this.lockUntil && new Date(this.lockUntil) > new Date());
+  }
 
-// Virtual for checking if account is locked
-userSchema.virtual('isLocked').get(function() {
-  return !!(this.lockUntil && this.lockUntil > Date.now());
-});
-
-// Pre-save middleware to hash password
-userSchema.pre('save', async function(next) {
-  // Only hash the password if it has been modified (or is new)
-  if (!this.isModified('password')) return next();
-  
-  try {
-    // Hash password with salt rounds of 12
+  // Hash password before saving
+  static async hashPassword(password) {
     const salt = await bcrypt.genSalt(12);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error) {
-    next(error);
+    return await bcrypt.hash(password, salt);
   }
-});
 
-// Method to compare password
-userSchema.methods.comparePassword = async function(candidatePassword) {
-  try {
+  // Compare password
+  async comparePassword(candidatePassword) {
     return await bcrypt.compare(candidatePassword, this.password);
-  } catch (error) {
-    throw error;
   }
-};
 
-// Method to generate OTP
-userSchema.methods.generateOTP = function() {
-  // Generate 4-digit OTP
-  const otp = Math.floor(1000 + Math.random() * 9000).toString();
-  
-  // Set OTP and expiration (10 minutes from now)
-  this.otp = {
-    code: otp,
-    expiresAt: new Date(Date.now() + 10 * 60 * 1000) // 10 minutes
-  };
-  
-  return otp;
-};
-
-// Method to verify OTP
-userSchema.methods.verifyOTP = function(candidateOTP) {
-  // Check if OTP exists and is not expired
-  if (!this.otp.code || !this.otp.expiresAt) {
-    return false;
+  // Generate OTP
+  generateOTP() {
+    const otp = Math.floor(1000 + Math.random() * 9000).toString();
+    this.otpCode = otp;
+    this.otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    return otp;
   }
-  
-  // Check if OTP is expired
-  if (this.otp.expiresAt < new Date()) {
-    return false;
+
+  // Verify OTP
+  verifyOTP(candidateOTP) {
+    if (!this.otpCode || !this.otpExpiresAt) {
+      return false;
+    }
+
+    if (new Date(this.otpExpiresAt) < new Date()) {
+      return false;
+    }
+
+    return this.otpCode === candidateOTP;
   }
-  
-  // Check if OTP matches
-  return this.otp.code === candidateOTP;
-};
 
-// Method to clear OTP
-userSchema.methods.clearOTP = function() {
-  this.otp = {
-    code: null,
-    expiresAt: null
-  };
-};
-
-// Method to handle failed login attempts
-userSchema.methods.incLoginAttempts = function() {
-  // If we have a previous lock that has expired, restart at 1
-  if (this.lockUntil && this.lockUntil < Date.now()) {
-    return this.updateOne({
-      $unset: { lockUntil: 1 },
-      $set: { loginAttempts: 1 }
-    });
+  // Clear OTP
+  clearOTP() {
+    this.otpCode = null;
+    this.otpExpiresAt = null;
   }
-  
-  const updates = { $inc: { loginAttempts: 1 } };
-  
-  // If we have reached max attempts and haven't been locked, lock account
-  if (this.loginAttempts + 1 >= 5 && !this.isLocked) {
-    updates.$set = { lockUntil: new Date(Date.now() + 30 * 60 * 1000) }; // Lock for 30 minutes
+
+  // Create new user
+  static async create(userData) {
+    const pool = getPool();
+    const hashedPassword = await this.hashPassword(userData.password);
+
+    const [result] = await pool.query(
+      `INSERT INTO users (name, email, password) VALUES (?, ?, ?)`,
+      [userData.name, userData.email, hashedPassword]
+    );
+
+    const [rows] = await pool.query(
+      `SELECT * FROM users WHERE id = ?`,
+      [result.insertId]
+    );
+
+    return new User(rows[0]);
   }
-  
-  return this.updateOne(updates);
-};
 
-// Method to reset login attempts
-userSchema.methods.resetLoginAttempts = function() {
-  return this.updateOne({
-    $unset: { loginAttempts: 1, lockUntil: 1 }
-  });
-};
+  // Find user by email
+  static async findByEmail(email) {
+    const pool = getPool();
+    const [rows] = await pool.query(
+      `SELECT * FROM users WHERE email = ?`,
+      [email.toLowerCase()]
+    );
 
-// Static method to find user by email
-userSchema.statics.findByEmail = function(email) {
-  return this.findOne({ email: email.toLowerCase() });
-};
+    if (rows.length === 0) {
+      return null;
+    }
 
-module.exports = mongoose.model('User', userSchema);
+    return new User(rows[0]);
+  }
+
+  // Find user by ID
+  static async findById(id) {
+    const pool = getPool();
+    const [rows] = await pool.query(
+      `SELECT * FROM users WHERE id = ?`,
+      [id]
+    );
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    return new User(rows[0]);
+  }
+
+  // Update user
+  async save() {
+    const pool = getPool();
+
+    // If password has changed, hash it
+    let passwordToSave = this.password;
+    if (this.password && !this.password.startsWith('$2a$')) {
+      passwordToSave = await User.hashPassword(this.password);
+    }
+
+    await pool.query(
+      `UPDATE users 
+       SET name = ?, email = ?, password = ?, is_verified = ?, 
+           otp_code = ?, otp_expires_at = ?, login_attempts = ?, 
+           lock_until = ?
+       WHERE id = ?`,
+      [
+        this.name,
+        this.email,
+        passwordToSave,
+        this.isVerified,
+        this.otpCode,
+        this.otpExpiresAt,
+        this.loginAttempts,
+        this.lockUntil,
+        this.id
+      ]
+    );
+
+    // Reload user data
+    const [rows] = await pool.query(
+      `SELECT * FROM users WHERE id = ?`,
+      [this.id]
+    );
+
+    Object.assign(this, rows[0]);
+  }
+
+  // Increment login attempts
+  async incLoginAttempts() {
+    const pool = getPool();
+
+    // If lock has expired, reset attempts
+    if (this.lockUntil && new Date(this.lockUntil) < new Date()) {
+      await pool.query(
+        `UPDATE users SET login_attempts = 1, lock_until = NULL WHERE id = ?`,
+        [this.id]
+      );
+      this.loginAttempts = 1;
+      this.lockUntil = null;
+      return;
+    }
+
+    this.loginAttempts += 1;
+
+    // Lock account if max attempts reached
+    if (this.loginAttempts >= 5) {
+      this.lockUntil = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
+    }
+
+    await pool.query(
+      `UPDATE users SET login_attempts = ?, lock_until = ? WHERE id = ?`,
+      [this.loginAttempts, this.lockUntil, this.id]
+    );
+  }
+
+  // Reset login attempts
+  async resetLoginAttempts() {
+    const pool = getPool();
+    await pool.query(
+      `UPDATE users SET login_attempts = 0, lock_until = NULL WHERE id = ?`,
+      [this.id]
+    );
+    this.loginAttempts = 0;
+    this.lockUntil = null;
+  }
+}
+
+module.exports = User;
