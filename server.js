@@ -17,8 +17,9 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/bills', require('./routes/bills'));
 app.use('/api/printers', require('./routes/printers'));
+app.use('/api/cash', require('./routes/cash'));
 
-// Health check route
+
 app.get('/', (req, res) => {
   res.json({ 
     message: 'BillBazar API is running!',
@@ -27,7 +28,8 @@ app.get('/', (req, res) => {
     endpoints: {
       auth: '/api/auth',
       bills: '/api/bills',
-      printers: '/api/printers'
+      printers: '/api/printers',
+      cash: '/api/cash'  // Add this line
     }
   });
 });

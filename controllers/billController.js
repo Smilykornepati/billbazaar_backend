@@ -1,5 +1,7 @@
 const Bill = require('../models/Bill');
 const Printer = require('../models/Printer');
+const CashTransaction = require('../models/CashTransaction');
+const CashAccount = require('../models/CashAccount');
 
 // Generate invoice number
 const generateInvoiceNumber = () => {
@@ -11,88 +13,124 @@ const generateInvoiceNumber = () => {
 // @route   POST /api/bills
 // @access  Private
 const createBill = async (req, res) => {
-  try {
-    const {
-      clientName,
-      clientContact,
-      issueDate,
-      dueDate,
-      items,
-      subtotal,
-      discount,
-      gstAmount,
-      grandTotal,
-      paymentMethod,
-      paymentType,
-      notes
-    } = req.body;
-
-    // Validation
-    if (!items || items.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please add at least one item'
-      });
-    }
-
-    if (!paymentMethod) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please select a payment method'
-      });
-    }
-
-    // Generate invoice number
-    const invoiceNumber = generateInvoiceNumber();
-
-    // Create bill
-    const bill = await Bill.create({
-      userId: req.user.id,
-      invoiceNumber,
-      clientName: clientName || 'Walk-in Customer',
-      clientContact: clientContact || '',
-      issueDate: issueDate || new Date(),
-      dueDate: dueDate || new Date(),
-      subtotal: subtotal || 0,
-      discount: discount || 0,
-      gstAmount: gstAmount || 0,
-      grandTotal: grandTotal || 0,
-      paymentMethod,
-      paymentType: paymentType || 'single',
-      notes: notes || '',
-      status: 'pending'
-    });
-
-    // Add items
-    const billItems = items.map(item => ({
-      name: item.name,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      totalPrice: item.totalPrice || (item.quantity * item.unitPrice)
-    }));
-
-    await bill.addItems(billItems);
-
-    // Get items
-    const savedItems = await bill.getItems();
-
-    res.status(201).json({
-      success: true,
-      message: 'Bill created successfully',
-      data: {
-        bill,
-        items: savedItems
+    try {
+      const {
+        clientName,
+        clientContact,
+        issueDate,
+        dueDate,
+        items,
+        subtotal,
+        discount,
+        gstAmount,
+        grandTotal,
+        paymentMethod,
+        paymentType,
+        notes,
+        recordCashTransaction,  // New field
+        cashAccountId          // New field
+      } = req.body;
+  
+      // Validation
+      if (!items || items.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please add at least one item'
+        });
       }
-    });
-
-  } catch (error) {
-    console.error('Create bill error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while creating bill'
-    });
-  }
-};
+  
+      if (!paymentMethod) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please select a payment method'
+        });
+      }
+  
+      // Generate invoice number
+      const invoiceNumber = generateInvoiceNumber();
+  
+      // Create bill
+      const bill = await Bill.create({
+        userId: req.user.id,
+        invoiceNumber,
+        clientName: clientName || 'Walk-in Customer',
+        clientContact: clientContact || '',
+        issueDate: issueDate || new Date(),
+        dueDate: dueDate || new Date(),
+        subtotal: subtotal || 0,
+        discount: discount || 0,
+        gstAmount: gstAmount || 0,
+        grandTotal: grandTotal || 0,
+        paymentMethod,
+        paymentType: paymentType || 'single',
+        notes: notes || '',
+        status: 'pending'
+      });
+  
+      // Add items
+      const billItems = items.map(item => ({
+        name: item.name,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        totalPrice: item.totalPrice || (item.quantity * item.unitPrice)
+      }));
+  
+      await bill.addItems(billItems);
+  
+      // Get items
+      const savedItems = await bill.getItems();
+  
+      // Record cash transaction if requested and payment is immediate
+      let cashTransaction = null;
+      if (recordCashTransaction && paymentType === 'single' && grandTotal > 0) {
+        try {
+          // Get account (use provided or default)
+          let accountId = cashAccountId;
+          if (!accountId) {
+            const defaultAccount = await CashAccount.findDefaultByUserId(req.user.id);
+            if (defaultAccount) {
+              accountId = defaultAccount.id;
+            }
+          }
+  
+          if (accountId) {
+            cashTransaction = await CashTransaction.create({
+              userId: req.user.id,
+              accountId: accountId,
+              transactionType: 'income',
+              category: 'Sales',
+              amount: grandTotal,
+              description: `Bill payment - ${invoiceNumber}`,
+              referenceNumber: invoiceNumber,
+              paymentMethod: paymentMethod,
+              billId: bill.id,
+              transactionDate: new Date()
+            });
+          }
+        } catch (cashError) {
+          console.error('Cash transaction error:', cashError);
+          // Don't fail the bill creation if cash transaction fails
+        }
+      }
+  
+      res.status(201).json({
+        success: true,
+        message: 'Bill created successfully',
+        data: {
+          bill,
+          items: savedItems,
+          cashTransaction: cashTransaction
+        }
+      });
+  
+    } catch (error) {
+      console.error('Create bill error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Server error while creating bill'
+      });
+    }
+  };
 
 // @desc    Print bill
 // @route   POST /api/bills/:id/print

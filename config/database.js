@@ -114,6 +114,72 @@ const createTables = async () => {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS cash_accounts (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      account_name VARCHAR(100) NOT NULL,
+      account_type ENUM('cash', 'bank', 'digital_wallet') DEFAULT 'cash',
+      opening_balance DECIMAL(12, 2) NOT NULL DEFAULT 0,
+      current_balance DECIMAL(12, 2) NOT NULL DEFAULT 0,
+      currency VARCHAR(10) DEFAULT 'INR',
+      is_active BOOLEAN DEFAULT TRUE,
+      is_default BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      INDEX idx_user_id (user_id),
+      INDEX idx_is_default (is_default)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+  
+  // Cash transactions table
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS cash_transactions (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      account_id INT NOT NULL,
+      transaction_type ENUM('income', 'expense', 'transfer_in', 'transfer_out', 'opening_balance') NOT NULL,
+      category VARCHAR(50) NOT NULL,
+      amount DECIMAL(12, 2) NOT NULL,
+      balance_after DECIMAL(12, 2) NOT NULL,
+      description TEXT,
+      reference_number VARCHAR(50),
+      payment_method VARCHAR(50),
+      related_transaction_id INT DEFAULT NULL,
+      bill_id INT DEFAULT NULL,
+      transaction_date DATETIME NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (account_id) REFERENCES cash_accounts(id) ON DELETE CASCADE,
+      FOREIGN KEY (bill_id) REFERENCES bills(id) ON DELETE SET NULL,
+      FOREIGN KEY (related_transaction_id) REFERENCES cash_transactions(id) ON DELETE SET NULL,
+      INDEX idx_user_id (user_id),
+      INDEX idx_account_id (account_id),
+      INDEX idx_transaction_type (transaction_type),
+      INDEX idx_transaction_date (transaction_date),
+      INDEX idx_category (category)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+  
+  // Cash categories table
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS cash_categories (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      name VARCHAR(100) NOT NULL,
+      type ENUM('income', 'expense') NOT NULL,
+      icon VARCHAR(50) DEFAULT 'category',
+      color VARCHAR(20) DEFAULT '#007bff',
+      is_system BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      INDEX idx_user_id (user_id),
+      INDEX idx_type (type)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
   console.log('✅ Database tables created successfully');
   connection.release();
 };
