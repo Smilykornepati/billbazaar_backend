@@ -15,13 +15,20 @@ app.use(express.urlencoded({ extended: true }));
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/bills', require('./routes/bills'));
+app.use('/api/printers', require('./routes/printers'));
 
 // Health check route
 app.get('/', (req, res) => {
   res.json({ 
-    message: 'Authentication API is running!',
+    message: 'BillBazar API is running!',
     database: 'MySQL',
-    status: 'Connected'
+    status: 'Connected',
+    endpoints: {
+      auth: '/api/auth',
+      bills: '/api/bills',
+      printers: '/api/printers'
+    }
   });
 });
 
@@ -43,7 +50,7 @@ app.use('*', (req, res) => {
   });
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
